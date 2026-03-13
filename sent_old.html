@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Speech Master (Legacy Support)</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 20px; background: #f0f2f5; color: #333; }
+        .container { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #1a73e8; margin-bottom: 25px; font-size: 22px; }
+        textarea { width: 100%; height: 120px; border-radius: 8px; border: 2px solid #ddd; padding: 15px; box-sizing: border-box; font-size: 16px; margin-bottom: 15px; }
+        
+        .stats-bar { display: block; margin-bottom: 15px; padding: 10px 15px; background: #e8f0fe; border-radius: 8px; font-weight: bold; color: #1967d2; font-size: 14px; }
+        
+        .controls { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .control-group { margin-bottom: 10px; }
+        label { font-size: 12px; font-weight: bold; color: #666; display: block; }
+        
+        select, input[type="range"] { width: 100%; margin-top: 5px; }
+        .btn-row { display: table; width: 100%; border-spacing: 5px; }
+        .btn-cell { display: table-cell; }
+        button { width: 100%; padding: 12px 5px; border-radius: 6px; border: none; font-size: 13px; cursor: pointer; font-weight: bold; }
+        .btn-paste { background: #34a853; color: white; }
+        .btn-process { background: #1a73e8; color: white; }
+
+        .sentence-card { 
+            background: #fff; border: 1px solid #eee; padding: 15px; margin-bottom: 12px; border-radius: 10px;
+            border-left: 6px solid #1a73e8;
+        }
+        .sentence-card.completed { border-left-color: #34a853; background: #f0fff4; }
+        .eng-text { font-size: 17px; font-weight: bold; display: block; margin-bottom: 5px; color: #202124; }
+        .jp-text { font-size: 14px; color: #5f6368; }
+        .sentence-card.playing { border-left-color: #f4b400; background: #fffdf0; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🎤 Smart Speech Master</h1>
+    
+    <textarea id="input-text" placeholder="英語のテキストを入力..." oninput="updateStats()"></textarea>
+    
+    <div class="stats-bar">
+        📊 単語数: <span id="word-count">0</span> | ⏱ 時間: <span id="reading-time">0:00</span>
+    </div>
+
+    <div class="btn-row">
+        <div class="btn-cell"><button class="btn-paste" onclick="pasteAndProcess()">📋 貼付開始</button></div>
+        <div class="btn-cell"><button class="btn-process" onclick="processText()">🔄 変換</button></div>
+    </div>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>言語</label>
+            <select id="voice-lang">
+                <option value="en-US">英語 (US)</option>
+                <option value="en-GB">英語 (UK)</option>
+                <option value="ja-JP">日本語</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>速度: <span id="speed-val">1.0</span>x</label>
+            <input type="range" id="speech-rate" min="0.5" max="1.5" step="0.1" value="1.0" oninput="onSpeedChange(this.value)">
+        </div>
+        <button style="background:#ea4335; color:white; font-size:11px;" onclick="clearProgress()">🗑 進捗リセット</button>
+    </div>
+
+    <div id="sentence-list"></div>
+</div>
+
+<script>
+    var currentAudio = null;
+
+    function onSpeedChange(val) {
+        document.getElementById('speed-val').innerHTML = val;
+        updateStats();
+    }
+
+    function updateStats() {
+        var text = document.getElementById('input-text').value;
+        var rate = parseFloat(document.getElementById('speech-rate').value);
+        var words = text.match(/\S+/g) || [];
+        var wordCount = words.length;
+        
+        document.getElementById('word-count').innerHTML = wordCount;
+
+        var baseWpm = 150;
+        var totalMinutes = wordCount / (baseWpm * rate);
+        var mins = Math.floor(totalMinutes);
+        var secs = Math.floor((totalMinutes - mins) * 60);
+        
+        document.getElementById('reading-time').innerHTML = mins + ":" + (secs < 10 ? "0" + secs : secs);
+    }
+
+    function pasteAndProcess() {
+        // Puffin等の古い環境ではnavigator.clipboardが動かないことが多いため
+        // プロンプトを代替手段として用意
+        var text = prompt("ここにテキストを貼り付けてください:");
+        if (text) {
+            document.getElementById('input-text').value = text;
+            processText();
+        }
+    }
+
+    function processText() {
+        var text = document.getElementById('input-text').value;
+        if (!text) return;
+
+        updateStats();
+        var listContainer = document.getElementById('sentence-list');
+        listContainer.innerHTML = '';
+
+        var progress = JSON.parse(localStorage.getItem('speech_progress') || '{}');
+        // 文区切りの正規表現（古いブラウザ用に簡略化）
+        var sentences = text.split(/[.!?]\s/);
+
+        for (var i = 0; i < sentences.length; i++) {
+            (function() {
+                var s = sentences[i].trim();
+                if (!s) return;
+
+                var card = document.createElement('div');
+                card.className = 'sentence-card';
+                if (progress[s]) card.className += ' completed';
+                
+                var engSpan = document.createElement('span');
+                engSpan.className = 'eng-text';
+                engSpan.innerHTML = s;
+                
+                var jpSpan = document.createElement('span');
+                jpSpan.className = 'jp-text';
+                jpSpan.innerHTML = "...";
+                
+                card.appendChild(engSpan);
+                card.appendChild(jpSpan);
+
+                card.onclick = function() {
+                    var allCards = document.getElementsByClassName('sentence-card');
+                    for (var j = 0; j < allCards.length; j++) {
+                        allCards[j].className = allCards[j].className.replace(' playing', '');
+                    }
+                    card.className += ' playing';
+                    playAudio(s);
+                    markAsDone(card, s);
+                };
+
+                listContainer.appendChild(card);
+                translateText(s, jpSpan);
+            })();
+        }
+    }
+
+    function translateText(text, element) {
+        var url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ja&dt=t&q=" + encodeURIComponent(text);
+        
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", url, true);
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState == 4 && xhr.status == 200) {
+                var res = JSON.parse(xhr.responseText);
+                element.innerHTML = res[0][0][0];
+            }
+        };
+        xhr.send();
+    }
+
+    function playAudio(text) {
+        if (currentAudio) currentAudio.pause();
+        
+        var lang = document.getElementById('voice-lang').value;
+        var rate = document.getElementById('speech-rate').value;
+        
+        // Puffinで通りやすいAPI形式
+        var speed = rate >= 1 ? 1 : 0.5;
+        var url = "https://translate.google.com/translate_tts?ie=UTF-8&q=" + encodeURIComponent(text) + "&tl=" + lang + "&client=tw-ob&ttsspeed=" + speed;
+
+        currentAudio = new Audio(url);
+        // Puffinのサーバー経由再生でもplaybackRateが効くかは環境によります
+        currentAudio.playbackRate = parseFloat(rate);
+        currentAudio.play();
+    }
+
+    function markAsDone(element, text) {
+        if (element.className.indexOf('completed') === -1) {
+            element.className += ' completed';
+        }
+        var progress = JSON.parse(localStorage.getItem('speech_progress') || '{}');
+        progress[text] = true;
+        localStorage.setItem('speech_progress', JSON.stringify(progress));
+    }
+
+    function clearProgress() {
+        if (confirm('リセットしますか？')) {
+            localStorage.removeItem('speech_progress');
+            processText();
+        }
+    }
+</script>
+
+</body>
+</html>
