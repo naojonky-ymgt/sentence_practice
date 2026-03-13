@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Speech & Translation Practice</title>
+    <title>Smart Speech Master Pro (gTTS Mode)</title>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 20px; background: #f0f2f5; color: #333; }
         .container { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
@@ -11,53 +11,129 @@
         textarea { width: 100%; height: 150px; border-radius: 8px; border: 2px solid #ddd; padding: 15px; box-sizing: border-box; font-size: 16px; margin-bottom: 15px; transition: border-color 0.3s; }
         textarea:focus { border-color: #1a73e8; outline: none; }
         
-        .controls { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-        select, button { padding: 10px 15px; border-radius: 6px; border: 1px solid #ccc; font-size: 14px; cursor: pointer; }
-        button { background: #1a73e8; color: white; border: none; font-weight: bold; flex-grow: 1; min-width: 150px; }
-        button:hover { background: #1557b0; }
+        /* 統計情報のスタイル */
+        .stats-bar { display: flex; gap: 20px; margin-bottom: 15px; padding: 10px 15px; background: #e8f0fe; border-radius: 8px; font-weight: bold; color: #1967d2; font-size: 14px; }
+        
+        .controls { display: flex; gap: 15px; margin-bottom: 20px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 8px; }
+        .control-group { display: flex; flex-direction: column; gap: 5px; }
+        label { font-size: 12px; font-weight: bold; color: #666; }
+        
+        select, input[type="range"] { padding: 5px; }
+        button { padding: 10px 15px; border-radius: 6px; border: none; font-size: 14px; cursor: pointer; font-weight: bold; transition: opacity 0.2s; }
+        .btn-paste { background: #34a853; color: white; flex: 1; }
+        .btn-process { background: #1a73e8; color: white; flex: 1; }
+        button:hover { opacity: 0.8; }
 
         .sentence-card { 
             background: #fff; border: 1px solid #eee; padding: 18px; margin-bottom: 12px; border-radius: 10px;
             cursor: pointer; transition: all 0.2s; position: relative; border-left: 6px solid #1a73e8;
         }
-        .sentence-card:hover { background: #f8f9fa; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.05); }
+        .sentence-card:hover { background: #f8f9fa; transform: translateY(-2px); }
+        .sentence-card.completed { border-left-color: #34a853; background: #f0fff4; opacity: 0.8; }
+        .sentence-card.completed::after { content: '✓ Done'; position: absolute; top: 10px; right: 10px; font-size: 12px; color: #34a853; font-weight: bold; }
+
         .eng-text { font-size: 18px; font-weight: 500; display: block; margin-bottom: 8px; color: #202124; }
         .jp-text { font-size: 14px; color: #5f6368; font-style: italic; }
-        .loading { font-size: 12px; color: #aaa; }
+        
+        .sentence-card.playing { border-left-color: #f4b400; background: #fffdf0; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>🎤 Smart Speech Master</h1>
+    <h1>🎤 Smart Speech Master (gTTS)</h1>
     
-    <textarea id="input-text" placeholder="ここに英語のスピーチ原稿を貼り付けてください..."></textarea>
+    <textarea id="input-text" placeholder="ここに英語のスピーチ原稿を貼り付けてください..." oninput="updateStats()"></textarea>
     
+    <div class="stats-bar">
+        <span>📊 総単語数: <span id="word-count">0</span> words</span>
+        <span>⏱ 推定読了時間: <span id="reading-time">0:00</span></span>
+    </div>
+
+    <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+        <button class="btn-paste" onclick="pasteAndProcess()">📋 クリップボードから貼り付けて開始</button>
+        <button class="btn-process" onclick="processText()">🔄 再変換＆練習開始</button>
+    </div>
+
     <div class="controls">
-        <select id="voice-gender">
-            <option value="en-US-Wavenet-D">男性の声 (Male)</option>
-            <option value="en-US-Wavenet-F" selected>女性の声 (Female)</option>
-        </select>
-        <button onclick="processText()">翻訳して練習を開始</button>
+        <div class="control-group">
+            <label>言語設定</label>
+            <select id="voice-lang">
+                <option value="en-US" selected>英語 (US)</option>
+                <option value="en-GB">英語 (UK)</option>
+                <option value="ja-JP">日本語</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>再生速度: <span id="speed-val">1.0</span>x</label>
+            <input type="range" id="speech-rate" min="0.5" max="1.5" step="0.1" value="1.0" oninput="updateSpeedLabel(this.value); updateStats();">
+        </div>
+        <button style="background:#ea4335; color:white; min-width:auto;" onclick="clearProgress()">🗑 進捗リセット</button>
     </div>
 
     <div id="sentence-list"></div>
 </div>
 
 <script>
+    let currentAudio = null;
+
+    // 統計計算ロジック
+    function updateStats() {
+        const text = document.getElementById('input-text').value.trim();
+        const rate = parseFloat(document.getElementById('speech-rate').value);
+        
+        // 単語数のカウント（空白で分割）
+        const words = text ? text.split(/\s+/).filter(w => w.length > 0) : [];
+        const wordCount = words.length;
+        document.getElementById('word-count').innerText = wordCount;
+
+        // 推定時間の計算
+        // 一般的なスピーキング速度 150wpm をベースに、再生速度(rate)で補正
+        const baseWpm = 150;
+        const adjustedWpm = baseWpm * rate;
+        const totalMinutes = wordCount / adjustedWpm;
+        
+        const mins = Math.floor(totalMinutes);
+        const secs = Math.floor((totalMinutes - mins) * 60);
+        
+        document.getElementById('reading-time').innerText = `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    function updateSpeedLabel(val) {
+        document.getElementById('speed-val').innerText = parseFloat(val).toFixed(1);
+    }
+
+    async function pasteAndProcess() {
+        try {
+            const text = await navigator.clipboard.readText();
+            if (text) {
+                document.getElementById('input-text').value = text;
+                updateStats(); // 貼り付け時に統計更新
+                processText();
+            }
+        } catch (err) {
+            alert('クリップボードの読み取りを許可してください');
+        }
+    }
+
     async function processText() {
         const text = document.getElementById('input-text').value;
-        const listContainer = document.getElementById('sentence-list');
-        listContainer.innerHTML = '<p style="text-align:center">翻訳中...</p>';
+        if (!text.trim()) return;
 
-        // 改良版分割ルール：." や .!? の後にスペースがある場所で分割
+        updateStats(); // 変換開始時に再計算
+
+        const listContainer = document.getElementById('sentence-list');
+        listContainer.innerHTML = '<p style="text-align:center">読み込み中...</p>';
+
+        const progress = JSON.parse(localStorage.getItem('speech_progress') || '{}');
         const sentences = text.split(/(?<=[.!?]"|(?<![.!?])[.!?])\s+/).filter(s => s.trim().length > 0);
 
         listContainer.innerHTML = ''; 
 
-        for (let sentence of sentences) {
+        sentences.forEach((sentence) => {
             const card = document.createElement('div');
             card.className = 'sentence-card';
+            if (progress[sentence]) card.classList.add('completed');
             
             const engSpan = document.createElement('span');
             engSpan.className = 'eng-text';
@@ -65,57 +141,67 @@
             
             const jpSpan = document.createElement('span');
             jpSpan.className = 'jp-text';
-            jpSpan.innerText = "翻訳を読み込み中...";
+            jpSpan.innerText = "翻訳中...";
             
             card.appendChild(engSpan);
             card.appendChild(jpSpan);
-            card.onclick = () => playGtts(sentence);
+
+            card.onclick = () => {
+                document.querySelectorAll('.sentence-card').forEach(c => c.classList.remove('playing'));
+                card.classList.add('playing');
+                
+                playGtts(sentence);
+                markAsDone(card, sentence);
+            };
+
             listContainer.appendChild(card);
 
-            // Google翻訳API（非公式URLスキーム）を使用して日本語取得
             translateText(sentence).then(translated => {
                 jpSpan.innerText = translated;
             });
-        }
+        });
     }
 
-    // Google翻訳のスクレイピングエンドポイントを利用した簡易翻訳機能
     async function translateText(text) {
         try {
-            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ja&dt=t&q=${encodeURIComponent(text)}`;
+            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ja&dt=t&q=${encodeURIComponent(text)}`;
             const response = await fetch(url);
             const data = await response.json();
             return data[0].map(item => item[0]).join('');
         } catch (e) {
-            return "（翻訳を取得できませんでした）";
+            return "（翻訳取得エラー）";
         }
     }
 
-    // gTTS的な読み上げ（Google音声エンジンのURLを直接叩く）
     function playGtts(text) {
-        const gender = document.getElementById('voice-gender').value;
-        // Web Speech APIを使いつつ、より自然な声を選択するロジック
-        const msg = new SpeechSynthesisUtterance(text);
-        const voices = window.speechSynthesis.getVoices();
-        
-        // 英語のボイスリストを取得
-        const enVoices = voices.filter(v => v.lang.startsWith('en'));
-        
-        // 男性・女性のキーワードで簡易フィルタリング（ブラウザ環境に依存）
-        if (gender.includes('Wavenet-D')) {
-            msg.voice = enVoices.find(v => v.name.includes('Male') || v.name.includes('David') || v.name.includes('Google US English')) || enVoices[0];
-        } else {
-            msg.voice = enVoices.find(v => v.name.includes('Female') || v.name.includes('Zira') || v.name.includes('Google US English')) || enVoices[1];
+        if (currentAudio) {
+            currentAudio.pause();
         }
 
-        msg.rate = 0.95;
-        msg.pitch = 1.0;
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(msg);
+        const lang = document.getElementById('voice-lang').value;
+        const rate = document.getElementById('speech-rate').value;
+        
+        const speed = rate >= 1 ? 1 : 0.5;
+        const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=${lang}&client=tw-ob&ttsspeed=${speed}`;
+
+        currentAudio = new Audio(url);
+        currentAudio.playbackRate = rate;
+        currentAudio.play().catch(e => console.error("再生エラー:", e));
     }
 
-    // ボイスリストの初期化（ブラウザ対策）
-    window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
+    function markAsDone(element, text) {
+        element.classList.add('completed');
+        const progress = JSON.parse(localStorage.getItem('speech_progress') || '{}');
+        progress[text] = true;
+        localStorage.setItem('speech_progress', JSON.stringify(progress));
+    }
+
+    function clearProgress() {
+        if (confirm('すべての進捗をリセットしますか？')) {
+            localStorage.removeItem('speech_progress');
+            processText();
+        }
+    }
 </script>
 
 </body>
