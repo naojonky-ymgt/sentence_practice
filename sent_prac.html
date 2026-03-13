@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Speech & Translation Practice</title>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 20px; background: #f0f2f5; color: #333; }
+        .container { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #1a73e8; margin-bottom: 25px; }
+        textarea { width: 100%; height: 150px; border-radius: 8px; border: 2px solid #ddd; padding: 15px; box-sizing: border-box; font-size: 16px; margin-bottom: 15px; transition: border-color 0.3s; }
+        textarea:focus { border-color: #1a73e8; outline: none; }
+        
+        .controls { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+        select, button { padding: 10px 15px; border-radius: 6px; border: 1px solid #ccc; font-size: 14px; cursor: pointer; }
+        button { background: #1a73e8; color: white; border: none; font-weight: bold; flex-grow: 1; min-width: 150px; }
+        button:hover { background: #1557b0; }
+
+        .sentence-card { 
+            background: #fff; border: 1px solid #eee; padding: 18px; margin-bottom: 12px; border-radius: 10px;
+            cursor: pointer; transition: all 0.2s; position: relative; border-left: 6px solid #1a73e8;
+        }
+        .sentence-card:hover { background: #f8f9fa; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.05); }
+        .eng-text { font-size: 18px; font-weight: 500; display: block; margin-bottom: 8px; color: #202124; }
+        .jp-text { font-size: 14px; color: #5f6368; font-style: italic; }
+        .loading { font-size: 12px; color: #aaa; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🎤 Smart Speech Master</h1>
+    
+    <textarea id="input-text" placeholder="ここに英語のスピーチ原稿を貼り付けてください..."></textarea>
+    
+    <div class="controls">
+        <select id="voice-gender">
+            <option value="en-US-Wavenet-D">男性の声 (Male)</option>
+            <option value="en-US-Wavenet-F" selected>女性の声 (Female)</option>
+        </select>
+        <button onclick="processText()">翻訳して練習を開始</button>
+    </div>
+
+    <div id="sentence-list"></div>
+</div>
+
+<script>
+    async function processText() {
+        const text = document.getElementById('input-text').value;
+        const listContainer = document.getElementById('sentence-list');
+        listContainer.innerHTML = '<p style="text-align:center">翻訳中...</p>';
+
+        // 改良版分割ルール：." や .!? の後にスペースがある場所で分割
+        const sentences = text.split(/(?<=[.!?]"|(?<![.!?])[.!?])\s+/).filter(s => s.trim().length > 0);
+
+        listContainer.innerHTML = ''; 
+
+        for (let sentence of sentences) {
+            const card = document.createElement('div');
+            card.className = 'sentence-card';
+            
+            const engSpan = document.createElement('span');
+            engSpan.className = 'eng-text';
+            engSpan.innerText = sentence;
+            
+            const jpSpan = document.createElement('span');
+            jpSpan.className = 'jp-text';
+            jpSpan.innerText = "翻訳を読み込み中...";
+            
+            card.appendChild(engSpan);
+            card.appendChild(jpSpan);
+            card.onclick = () => playGtts(sentence);
+            listContainer.appendChild(card);
+
+            // Google翻訳API（非公式URLスキーム）を使用して日本語取得
+            translateText(sentence).then(translated => {
+                jpSpan.innerText = translated;
+            });
+        }
+    }
+
+    // Google翻訳のスクレイピングエンドポイントを利用した簡易翻訳機能
+    async function translateText(text) {
+        try {
+            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ja&dt=t&q=${encodeURIComponent(text)}`;
+            const response = await fetch(url);
+            const data = await response.json();
+            return data[0].map(item => item[0]).join('');
+        } catch (e) {
+            return "（翻訳を取得できませんでした）";
+        }
+    }
+
+    // gTTS的な読み上げ（Google音声エンジンのURLを直接叩く）
+    function playGtts(text) {
+        const gender = document.getElementById('voice-gender').value;
+        // Web Speech APIを使いつつ、より自然な声を選択するロジック
+        const msg = new SpeechSynthesisUtterance(text);
+        const voices = window.speechSynthesis.getVoices();
+        
+        // 英語のボイスリストを取得
+        const enVoices = voices.filter(v => v.lang.startsWith('en'));
+        
+        // 男性・女性のキーワードで簡易フィルタリング（ブラウザ環境に依存）
+        if (gender.includes('Wavenet-D')) {
+            msg.voice = enVoices.find(v => v.name.includes('Male') || v.name.includes('David') || v.name.includes('Google US English')) || enVoices[0];
+        } else {
+            msg.voice = enVoices.find(v => v.name.includes('Female') || v.name.includes('Zira') || v.name.includes('Google US English')) || enVoices[1];
+        }
+
+        msg.rate = 0.95;
+        msg.pitch = 1.0;
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(msg);
+    }
+
+    // ボイスリストの初期化（ブラウザ対策）
+    window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
+</script>
+
+</body>
+</html>
